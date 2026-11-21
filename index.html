@@ -1,0 +1,383 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>OrbitGuard | Space Sustainability Dashboard</title>
+
+    <link rel="stylesheet" href="style.css">
+
+    <link rel="stylesheet"
+    href="https://cesium.com/downloads/cesiumjs/releases/1.127/Build/Cesium/Widgets/widgets.css">
+
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.127/Build/Cesium/Cesium.js"></script>
+</head>
+
+<body>
+
+    <aside class="sidebar">
+        <h2 class="logo">ORBITGUARD<span>.</span></h2>
+
+        <nav>
+            <a href="#dashboard" class="active">Dashboard</a>
+            <a href="#satellite-tracker">Satellite Tracker</a>
+            <a href="#debris-monitor">Debris Monitor</a>
+            <a href="#close-approaches">Close Approaches</a>
+            <a href="#space-sustainability">Space Sustainability</a>
+        </nav>
+
+        <div class="sidebar-footer">
+            SPACE ENVIRONMENT MONITOR
+        </div>
+    </aside>
+
+    <main class="main-content">
+
+        <!-- DASHBOARD -->
+        <section id="dashboard">
+
+            <header class="topbar">
+                <div>
+                    <h1>Space Environment Dashboard</h1>
+                    <p>Monitor satellites, orbital debris and space sustainability.</p>
+                </div>
+
+                <div class="status">● SYSTEM ONLINE</div>
+            </header>
+
+            <!-- STATISTICS -->
+            <section class="stats-grid">
+
+                <div class="stat-card">
+                    <p>Tracked Objects</p>
+                    <h2 id="totalObjects">Loading...</h2>
+                    <span id="statsSource">Connecting to backend...</span>
+                </div>
+
+                <div class="stat-card">
+                    <p>Active Satellites</p>
+                    <h2 id="activeSatellites">Loading...</h2>
+                    <span>Dashboard statistics</span>
+                </div>
+
+                <div class="stat-card">
+                    <p>Debris Objects</p>
+                    <h2 id="debrisObjects">Loading...</h2>
+                    <span>Dashboard statistics</span>
+                </div>
+
+                <div class="stat-card">
+                    <p>Close Approaches</p>
+                    <h2 id="closeApproaches">N/A</h2>
+                    <span>Verified alerts unavailable</span>
+                </div>
+
+            </section>
+
+            <!-- GLOBE AND ALERT CENTER -->
+            <section class="dashboard-grid">
+
+                <div class="panel globe-panel">
+                    <h2>Orbital Visualization</h2>
+                    <p>Satellite and debris tracking visualization.</p>
+
+                    <div id="cesiumContainer"></div>
+
+                    <div id="objectDetails" class="object-details">
+
+                        <h3 id="detailName">Select an Object</h3>
+
+                        <p>Type: <span id="detailType">—</span></p>
+                        <p>Altitude: <span id="detailAltitude">—</span></p>
+                        <p>Latitude: <span id="detailLatitude">—</span></p>
+                        <p>Longitude: <span id="detailLongitude">—</span></p>
+
+                    </div>
+                </div>
+
+                <div class="panel alerts-panel">
+                    <h2>Alert Center</h2>
+
+                    <div class="alert-item">
+                        <span class="alert-dot warning"></span>
+                        <div>
+                            <h3>Approach Watch</h3>
+                            <p>Conjunction assessment not connected</p>
+                        </div>
+                    </div>
+
+                    <div class="alert-item">
+                        <span class="alert-dot info"></span>
+                        <div>
+                            <h3>Orbital Monitoring</h3>
+                            <p>Sample status notification</p>
+                        </div>
+                    </div>
+
+                    <div class="alert-item">
+                        <span class="alert-dot success"></span>
+                        <div>
+                            <h3>System Status</h3>
+                            <p>Dashboard interface is operational</p>
+                        </div>
+                    </div>
+
+                </div>
+
+            </section>
+
+        </section>
+
+
+        <!-- SATELLITE TRACKER -->
+        <section id="satellite-tracker" class="tracking-section">
+
+            <div class="section-header">
+                <div>
+                    <h2>Satellite Tracker</h2>
+                    <p>Search and monitor tracked orbital objects</p>
+                </div>
+
+                <input
+                    type="text"
+                    id="searchObject"
+                    placeholder="Search objects..."
+                >
+            </div>
+
+            <!-- LIVE TRACKING OVERVIEW -->
+            <div class="stats-grid tracker-stats">
+
+                <div class="stat-card">
+                    <p>Total Tracked Objects</p>
+                    <h2 id="trackerTotalCount">Loading...</h2>
+                    <span>Live API records</span>
+                </div>
+
+                <div class="stat-card">
+                    <p>Satellites</p>
+                    <h2 id="trackerSatelliteCount">Loading...</h2>
+                    <span>Tracked satellites</span>
+                </div>
+
+                <div class="stat-card">
+                    <p>Orbital Debris</p>
+                    <h2 id="trackerDebrisCount">Loading...</h2>
+                    <span>Tracked debris objects</span>
+                </div>
+
+                <div class="stat-card">
+                    <p>Tracking Status</p>
+                    <h2 id="trackerStatus">CONNECTING</h2>
+                    <span id="trackerLastUpdated">Waiting for API data</span>
+                </div>
+
+            </div>
+
+            <div class="tracking-filters">
+                <label for="objectTypeFilter">Object Type:</label>
+
+                <select id="objectTypeFilter">
+                    <option value="all">All Objects</option>
+                    <option value="satellite">Satellites</option>
+                    <option value="debris">Debris</option>
+                </select>
+            </div>
+
+            <div class="table-container">
+
+                <table id="objectTable">
+
+                    <thead>
+                        <tr>
+                            <th>Object Name</th>
+                            <th>Object Type</th>
+                            <th>Altitude</th>
+                            <th>Velocity</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+                        <tr>
+                            <td colspan="5" style="text-align:center;">
+                                Connecting to orbital tracking system...
+                            </td>
+                        </tr>
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </section>
+
+
+        <!-- DEBRIS MONITOR -->
+        <section id="debris-monitor" class="analytics-section">
+
+            <div class="section-header">
+                <div>
+                    <h2>Debris Monitor & Orbital Analytics</h2>
+                    <p>Visual overview of tracked orbital objects</p>
+                </div>
+            </div>
+
+            <div class="charts-grid">
+
+                <div class="chart-card">
+                    <h3>Object Distribution</h3>
+                    <canvas id="objectChart"></canvas>
+                </div>
+
+                <div class="chart-card">
+                    <h3>Altitude Distribution</h3>
+                    <canvas id="altitudeChart"></canvas>
+                </div>
+
+            </div>
+
+        </section>
+
+
+        <!-- CLOSE APPROACHES -->
+        <section id="close-approaches" class="alerts-section">
+
+            <div class="section-header">
+
+                <div>
+                    <h2>Close Approach Monitor</h2>
+                    <p>Monitoring conjunction assessment availability</p>
+                </div>
+
+                <span class="alert-count">0 Verified Alerts</span>
+
+            </div>
+
+            <div class="alert-list" id="closeApproachList">
+
+                <div class="alert-item">
+                    <div class="alert-info">
+                        <h3>No verified conjunction alerts</h3>
+                        <p>
+                            A verified conjunction data source is not
+                            currently connected to OrbitGuard.
+                        </p>
+                    </div>
+                </div>
+
+            </div>
+
+            <div class="chart-card">
+                <h3>Assessment Status</h3>
+
+                <p>
+                    OrbitGuard currently tracks catalogued satellites
+                    and orbital debris using CelesTrak data and SGP4
+                    propagation.
+                </p>
+
+                <p>
+                    Current orbital positions alone cannot establish
+                    future collision risk. Verified conjunction
+                    assessment requires validated future trajectories,
+                    orbital uncertainty analysis and collision
+                    probability calculations.
+                </p>
+
+                <p>
+                    <strong>Status:</strong>
+                    Experimental orbital monitoring operational.
+                    Verified conjunction assessment not connected.
+                </p>
+            </div>
+
+        </section>
+
+
+        
+<section id="space-sustainability" class="sustainability-section">
+
+    <div class="section-header">
+        <div>
+            <h2>Space Sustainability</h2>
+            <p>Understanding orbital pollution and protecting Earth's orbital environment.</p>
+        </div>
+        <span class="alert-count">SPACE ENVIRONMENT</span>
+    </div>
+
+    <div class="sustainability-grid">
+
+        <div class="sustainability-card">
+            <div class="sustainability-icon">🌍</div>
+            <h3>Protect Earth's Orbit</h3>
+            <p>
+                Earth's orbital environment supports communication,
+                navigation, weather forecasting and scientific missions.
+                Keeping these orbital regions usable is essential for
+                future generations.
+            </p>
+        </div>
+
+        <div class="sustainability-card">
+            <div class="sustainability-icon">🛰️</div>
+            <h3>Reduce Orbital Debris</h3>
+            <p>
+                Defunct satellites, spent rocket stages and fragments
+                can remain in orbit for years. Responsible mission
+                planning and debris mitigation help limit their growth.
+            </p>
+        </div>
+
+        <div class="sustainability-card">
+            <div class="sustainability-icon">⚠️</div>
+            <h3>Understand Collision Risks</h3>
+            <p>
+                Objects in crowded orbital regions require monitoring.
+                Reliable conjunction assessment helps satellite operators
+                evaluate potential close approaches.
+            </p>
+        </div>
+
+        <div class="sustainability-card">
+            <div class="sustainability-icon">♻️</div>
+            <h3>Responsible Space Operations</h3>
+            <p>
+                End-of-life disposal, passivation and responsible
+                spacecraft design can reduce the creation of additional
+                orbital debris.
+            </p>
+        </div>
+
+    </div>
+
+    <div class="sustainability-note">
+        <strong>OrbitGuard's mission</strong>
+        <p>
+            Support informed orbital awareness through satellite tracking,
+            debris monitoring and transparent space-environment analytics.
+        </p>
+    </div>
+
+</section>
+
+
+
+        <footer>
+            ORBITGUARD © 2026 | SPACE SUSTAINABILITY INITIATIVE
+        </footer>
+
+    </main>
+
+
+    <!-- JAVASCRIPT FILES -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="js/globe.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/main.js"></script>
+    <script src="js/charts.js"></script>
+
+</body>
+</html>
