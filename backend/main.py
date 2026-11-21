@@ -1,7 +1,12 @@
 
 from datetime import datetime, timezone
+import time
+import threading
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sgp4.api import Satrec, jday
@@ -14,7 +19,7 @@ from sgp4.api import Satrec, jday
 app = FastAPI(
     title="OrbitGuard API",
     description="Orbital debris monitoring and space sustainability platform.",
-    version="2.1.0"
+    version="2.2.0"
 )
 
 app.add_middleware(
@@ -31,10 +36,118 @@ app.add_middleware(
 
 
 # ======================================
+# HTTP SESSION + RETRIES
+# ======================================
+
+session = requests.Session()
+
+retry_strategy = Retry(
+    total=2,
+    connect=2,
+    read=2,
+    backoff_factor=0.5,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=["GET"],
+    respect_retry_after_header=True
+)
+
+adapter = HTTPAdapter(max_retries=retry_strategy)
+
+session.mount("https://", adapter)
+session.mount("http://", adapter)
+
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 (compatible; OrbitGuard/2.2; orbital research)",
+    "Accept": "text/plain, */*"
+})
+
+
+# ======================================
+# TLE CACHE
+# ======================================
+
+# Cache successful TLE downloads in memory.
+# Fresh cache: 5 minutes.
+# Maximum stale fallback: 24 hours.
+
+tle_cache = {}
+cache_lock = threading.Lock()
+
+CACHE_TTL = 300
+MAX_STALE_SECONDS = 86400
+
+
+def fetch_tle_group(group):
+
+    current_time = time.time()
+
+    with cache_lock:
+        cached = tle_cache.get(group)
+
+    # Reuse recently downloaded TLE data.
+    if cached:
+        age = current_time - cached["timestamp"]
+
+        if age < CACHE_TTL:
+            return cached["lines"], "cached"
+
+    url = (
+        "https://celestrak.org/NORAD/elements/gp.php"
+        f"?GROUP={group}&FORMAT=tle"
+    )
+
+    try:
+        response = session.get(
+            url,
+            timeout=(6, 15)
+        )
+
+        response.raise_for_status()
+
+        lines = [
+            line.strip()
+            for line in response.text.splitlines()
+            if line.strip()
+        ]
+
+        # Reject invalid or empty responses.
+        valid_tle = any(
+            lines[i + 1].startswith("1 ")
+            and lines[i + 2].startswith("2 ")
+            for i in range(len(lines) - 2)
+        )
+
+        if not valid_tle:
+            raise ValueError(
+                f"Invalid TLE response for group: {group}"
+            )
+
+        with cache_lock:
+            tle_cache[group] = {
+                "lines": lines,
+                "timestamp": time.time()
+            }
+
+        return lines, "live"
+
+    except (requests.RequestException, ValueError):
+
+        # Use the last successful download if available.
+        if cached:
+            age = time.time() - cached["timestamp"]
+
+            if age <= MAX_STALE_SECONDS:
+                return cached["lines"], "cached"
+
+        raise
+
+
+# ======================================
 # ORBITAL POSITION CALCULATIONS
 # ======================================
 
 def get_current_julian_date():
+
     now = datetime.now(timezone.utc)
 
     jd, fr = jday(
@@ -50,6 +163,7 @@ def get_current_julian_date():
 
 
 def calculate_orbital_position(line1, line2, jd, fr):
+
     satellite = Satrec.twoline2rv(line1, line2)
 
     error, position, velocity = satellite.sgp4(jd, fr)
@@ -72,39 +186,15 @@ def calculate_orbital_position(line1, line2, jd, fr):
 
 
 # ======================================
-# CELESTRAK TLE FETCHER
+# TLE PARSER
 # ======================================
 
-def fetch_tle_group(group):
-    url = (
-        "https://celestrak.org/NORAD/elements/gp.php"
-        f"?GROUP={group}&FORMAT=tle"
-    )
-
-    headers = {
-        "User-Agent": "OrbitGuard/2.1 (space sustainability research)",
-        "Accept": "text/plain"
-    }
-
-    response = requests.get(
-        url,
-        headers=headers,
-        timeout=12
-    )
-
-    response.raise_for_status()
-
-    return [
-        line.strip()
-        for line in response.text.splitlines()
-        if line.strip()
-    ]
-
-
 def parse_tle_objects(lines, jd, fr):
+
     objects = []
 
     for i in range(len(lines) - 2):
+
         name = lines[i]
 
         if not lines[i + 1].startswith("1 "):
@@ -142,11 +232,86 @@ def parse_tle_objects(lines, jd, fr):
 
 
 # ======================================
+# COMMON ORBITAL GROUP LOADER
+# ======================================
+
+def load_orbital_groups(groups):
+
+    now, jd, fr = get_current_julian_date()
+
+    objects = []
+    failed_groups = []
+    cached_groups = []
+    seen_ids = set()
+
+    for group in groups:
+
+        try:
+            lines, source = fetch_tle_group(group)
+
+            if source == "cached":
+                cached_groups.append(group)
+
+            group_objects = parse_tle_objects(
+                lines,
+                jd,
+                fr
+            )
+
+            for obj in group_objects:
+
+                norad_id = obj["norad_id"]
+
+                if norad_id not in seen_ids:
+                    objects.append(obj)
+                    seen_ids.add(norad_id)
+
+        except (requests.RequestException, ValueError) as error:
+
+            print(
+                f"OrbitGuard: Could not load {group}: {error}"
+            )
+
+            failed_groups.append(group)
+
+    if not objects:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Orbital catalogue data is unavailable",
+                "failed_groups": failed_groups,
+                "hint": (
+                    "CelesTrak is unavailable and no usable "
+                    "cached catalogue exists yet."
+                )
+            }
+        )
+
+    if cached_groups and failed_groups:
+        data_status = "partial_cached"
+    elif cached_groups:
+        data_status = "cached"
+    elif failed_groups:
+        data_status = "partial_live"
+    else:
+        data_status = "live"
+
+    return {
+        "now": now,
+        "objects": objects,
+        "failed_groups": failed_groups,
+        "cached_groups": cached_groups,
+        "data_status": data_status
+    }
+
+
+# ======================================
 # HOME
 # ======================================
 
 @app.get("/")
 def home():
+
     return {
         "message": "Welcome to OrbitGuard!",
         "status": "Backend is running"
@@ -159,6 +324,7 @@ def home():
 
 @app.get("/stats")
 def get_stats():
+
     return {
         "total_objects": 40000,
         "active_satellites": 11000,
@@ -176,6 +342,7 @@ def get_stats():
 
 @app.get("/satellites")
 def get_satellites():
+
     return {
         "data_type": "Illustrative demonstration data",
         "satellites": [
@@ -213,6 +380,7 @@ def get_satellites():
 
 @app.get("/debris")
 def get_debris():
+
     return {
         "data_type": "Illustrative demonstration data",
         "debris": [
@@ -247,6 +415,7 @@ def get_debris():
 
 @app.get("/close-approaches")
 def get_close_approaches():
+
     return {
         "data_source": "OrbitGuard",
         "data_type": "Conjunction assessment not connected",
@@ -269,6 +438,7 @@ def get_close_approaches():
 
 @app.get("/alerts")
 def get_alerts():
+
     return {
         "data_type": "Demonstration information alerts",
         "alerts": [
@@ -292,12 +462,11 @@ def get_alerts():
 
 
 # ======================================
-# LIVE SATELLITE TRACKER — CELESTRAK
+# LIVE SATELLITE TRACKER
 # ======================================
 
 @app.get("/live-satellites")
 def get_live_satellites():
-    now, jd, fr = get_current_julian_date()
 
     groups = [
         "stations",
@@ -305,57 +474,29 @@ def get_live_satellites():
         "active"
     ]
 
-    satellites = []
-    failed_groups = []
-    seen_ids = set()
+    result = load_orbital_groups(groups)
 
-    for group in groups:
-        try:
-            lines = fetch_tle_group(group)
-
-            group_objects = parse_tle_objects(
-                lines,
-                jd,
-                fr
-            )
-
-            for satellite in group_objects:
-                norad_id = satellite["norad_id"]
-
-                if norad_id not in seen_ids:
-                    satellites.append(satellite)
-                    seen_ids.add(norad_id)
-
-        except requests.RequestException:
-            failed_groups.append(group)
-
-    if not satellites:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "CelesTrak satellite data is currently unavailable",
-                "failed_groups": failed_groups
-            }
-        )
+    satellites = result["objects"]
 
     return {
         "data_source": "CelesTrak",
         "data_type": "Catalogued satellites with SGP4-propagated positions",
         "coordinate_frame": "TEME",
-        "calculated_at": now.isoformat(),
+        "calculated_at": result["now"].isoformat(),
+        "data_status": result["data_status"],
         "count": len(satellites),
-        "failed_groups": failed_groups,
+        "failed_groups": result["failed_groups"],
+        "cached_groups": result["cached_groups"],
         "satellites": satellites
     }
 
 
 # ======================================
-# LIVE DEBRIS TRACKER — CELESTRAK
+# LIVE DEBRIS TRACKER
 # ======================================
 
 @app.get("/live-debris")
 def get_live_debris():
-    now, jd, fr = get_current_julian_date()
 
     groups = [
         "cosmos-2251-debris",
@@ -363,45 +504,18 @@ def get_live_debris():
         "iridium-33-debris"
     ]
 
-    debris_objects = []
-    failed_groups = []
-    seen_ids = set()
+    result = load_orbital_groups(groups)
 
-    for group in groups:
-        try:
-            lines = fetch_tle_group(group)
-
-            group_objects = parse_tle_objects(
-                lines,
-                jd,
-                fr
-            )
-
-            for debris in group_objects:
-                norad_id = debris["norad_id"]
-
-                if norad_id not in seen_ids:
-                    debris_objects.append(debris)
-                    seen_ids.add(norad_id)
-
-        except requests.RequestException:
-            failed_groups.append(group)
-
-    if not debris_objects:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "CelesTrak debris data is currently unavailable",
-                "failed_groups": failed_groups
-            }
-        )
+    debris_objects = result["objects"]
 
     return {
         "data_source": "CelesTrak",
         "data_type": "Catalogued debris with SGP4-propagated positions",
         "coordinate_frame": "TEME",
-        "calculated_at": now.isoformat(),
+        "calculated_at": result["now"].isoformat(),
+        "data_status": result["data_status"],
         "count": len(debris_objects),
-        "failed_groups": failed_groups,
+        "failed_groups": result["failed_groups"],
+        "cached_groups": result["cached_groups"],
         "debris": debris_objects
     }
