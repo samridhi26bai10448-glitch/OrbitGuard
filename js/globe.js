@@ -96,9 +96,8 @@ console.log("OrbitGuard Earth ready!");
 // API ENDPOINTS
 // ======================================
 
-const SATELLITE_API_URL = "https://orbitguard-api-oud7.onrender.com/live-satellites";
-const DEBRIS_API_URL = "https://orbitguard-api-oud7.onrender.com/live-debris";
-
+const SATELLITE_API = "https://orbitguard-api-oud7.onrender.com/live-satellites";
+const DEBRIS_API = "https://orbitguard-api-oud7.onrender.com/live-debris";
 const liveSatelliteEntities = new Map();
 const liveDebrisEntities = new Map();
 
