@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import time
 import threading
+import math
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -19,7 +20,7 @@ from sgp4.api import Satrec, jday
 app = FastAPI(
     title="OrbitGuard API",
     description="Orbital debris monitoring and space sustainability platform.",
-    version="2.2.0"
+    version="2.3.0"
 )
 
 app.add_middleware(
@@ -57,7 +58,7 @@ session.mount("https://", adapter)
 session.mount("http://", adapter)
 
 session.headers.update({
-    "User-Agent": "Mozilla/5.0 (compatible; OrbitGuard/2.2; orbital research)",
+    "User-Agent": "Mozilla/5.0 (compatible; OrbitGuard/2.3; orbital research)",
     "Accept": "text/plain, */*"
 })
 
@@ -65,10 +66,6 @@ session.headers.update({
 # ======================================
 # TLE CACHE
 # ======================================
-
-# Cache successful TLE downloads in memory.
-# Fresh cache: 5 minutes.
-# Maximum stale fallback: 24 hours.
 
 tle_cache = {}
 cache_lock = threading.Lock()
@@ -84,7 +81,6 @@ def fetch_tle_group(group):
     with cache_lock:
         cached = tle_cache.get(group)
 
-    # Reuse recently downloaded TLE data.
     if cached:
         age = current_time - cached["timestamp"]
 
@@ -110,7 +106,6 @@ def fetch_tle_group(group):
             if line.strip()
         ]
 
-        # Reject invalid or empty responses.
         valid_tle = any(
             lines[i + 1].startswith("1 ")
             and lines[i + 2].startswith("2 ")
@@ -132,7 +127,6 @@ def fetch_tle_group(group):
 
     except (requests.RequestException, ValueError):
 
-        # Use the last successful download if available.
         if cached:
             age = time.time() - cached["timestamp"]
 
@@ -232,6 +226,74 @@ def parse_tle_objects(lines, jd, fr):
 
 
 # ======================================
+# SIMULATED DEMONSTRATION OBJECTS
+# ======================================
+
+def generate_demo_objects(group):
+
+    if "debris" in group:
+
+        objects = [
+            ("Simulated Cosmos Fragment", 900001, 790, 0.3),
+            ("Simulated Fengyun Fragment", 900002, 850, 1.8),
+            ("Simulated Iridium Fragment", 900003, 780, 3.1),
+            ("Simulated Debris Object", 900004, 920, 4.5),
+        ]
+
+    else:
+
+        objects = [
+            ("ISS (DEMO POSITION)", 900101, 420, 0.5),
+            ("NOAA-19 (DEMO POSITION)", 900102, 870, 2.0),
+            ("HUBBLE (DEMO POSITION)", 900103, 540, 3.5),
+            ("SIMULATED SATELLITE", 900104, 700, 5.0),
+        ]
+
+    result = []
+
+    inclination = math.radians(35)
+
+    for name, norad_id, altitude, angle in objects:
+
+        radius = 6371 + altitude
+
+        x = radius * math.cos(angle)
+
+        y = (
+            radius
+            * math.sin(angle)
+            * math.cos(inclination)
+        )
+
+        z = (
+            radius
+            * math.sin(angle)
+            * math.sin(inclination)
+        )
+
+        speed = 7.5
+
+        result.append({
+            "name": name,
+            "norad_id": norad_id,
+
+            "position_teme_km": {
+                "x": x,
+                "y": y,
+                "z": z
+            },
+
+            "velocity_teme_km_s": {
+                "x": -speed * math.sin(angle),
+                "y": speed * math.cos(angle) * math.cos(inclination),
+                "z": speed * math.cos(angle) * math.sin(inclination)
+            }
+        })
+
+    return result
+
+
+# ======================================
 # COMMON ORBITAL GROUP LOADER
 # ======================================
 
@@ -247,6 +309,7 @@ def load_orbital_groups(groups):
     for group in groups:
 
         try:
+
             lines, source = fetch_tle_group(group)
 
             if source == "cached":
@@ -263,6 +326,7 @@ def load_orbital_groups(groups):
                 norad_id = obj["norad_id"]
 
                 if norad_id not in seen_ids:
+
                     objects.append(obj)
                     seen_ids.add(norad_id)
 
@@ -274,25 +338,36 @@ def load_orbital_groups(groups):
 
             failed_groups.append(group)
 
+    # DEMONSTRATION FALLBACK
+    # Used only when no real or cached objects are available.
+
     if not objects:
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "message": "Orbital catalogue data is unavailable",
-                "failed_groups": failed_groups,
-                "hint": (
-                    "CelesTrak is unavailable and no usable "
-                    "cached catalogue exists yet."
-                )
-            }
-        )
+
+        demo_objects = []
+
+        for group in groups:
+
+            demo_objects.extend(
+                generate_demo_objects(group)
+            )
+
+        return {
+            "now": now,
+            "objects": demo_objects,
+            "failed_groups": failed_groups,
+            "cached_groups": [],
+            "data_status": "demo"
+        }
 
     if cached_groups and failed_groups:
         data_status = "partial_cached"
+
     elif cached_groups:
         data_status = "cached"
+
     elif failed_groups:
         data_status = "partial_live"
+
     else:
         data_status = "live"
 
@@ -478,9 +553,21 @@ def get_live_satellites():
 
     satellites = result["objects"]
 
+    is_demo = result["data_status"] == "demo"
+
     return {
-        "data_source": "CelesTrak",
-        "data_type": "Catalogued satellites with SGP4-propagated positions",
+        "data_source": (
+            "Simulated demonstration data"
+            if is_demo
+            else "CelesTrak"
+        ),
+
+        "data_type": (
+            "Simulated orbital positions for demonstration"
+            if is_demo
+            else "Catalogued satellites with SGP4-propagated positions"
+        ),
+
         "coordinate_frame": "TEME",
         "calculated_at": result["now"].isoformat(),
         "data_status": result["data_status"],
@@ -508,9 +595,21 @@ def get_live_debris():
 
     debris_objects = result["objects"]
 
+    is_demo = result["data_status"] == "demo"
+
     return {
-        "data_source": "CelesTrak",
-        "data_type": "Catalogued debris with SGP4-propagated positions",
+        "data_source": (
+            "Simulated demonstration data"
+            if is_demo
+            else "CelesTrak"
+        ),
+
+        "data_type": (
+            "Simulated orbital positions for demonstration"
+            if is_demo
+            else "Catalogued debris with SGP4-propagated positions"
+        ),
+
         "coordinate_frame": "TEME",
         "calculated_at": result["now"].isoformat(),
         "data_status": result["data_status"],
