@@ -3,6 +3,27 @@
 // ORBITGUARD — SPACE TRACKING GLOBE
 // ======================================
 
+// ======================================
+// API ENDPOINTS
+// ======================================
+
+window.SATELLITE_API =
+    "https://orbitguard-api-oud7.onrender.com/live-satellites";
+
+window.DEBRIS_API =
+    "https://orbitguard-api-oud7.onrender.com/live-debris";
+
+const MAX_VISIBLE_SATELLITES = 500;
+const REFRESH_INTERVAL = 300000;
+
+const liveSatelliteEntities = new Map();
+const liveDebrisEntities = new Map();
+
+
+// ======================================
+// CESIUM VIEWER
+// ======================================
+
 const viewer = new Cesium.Viewer("cesiumContainer", {
     baseLayer: false,
     animation: false,
@@ -21,15 +42,7 @@ window.orbitGuardViewer = viewer;
 
 
 // ======================================
-// PERFORMANCE SETTINGS
-// ======================================
-
-const MAX_VISIBLE_SATELLITES = 500;
-const REFRESH_INTERVAL = 300000;
-
-
-// ======================================
-// REALISTIC EARTH IMAGERY
+// EARTH IMAGERY
 // ======================================
 
 const imagery = new Cesium.UrlTemplateImageryProvider({
@@ -47,7 +60,7 @@ imageryLayer.gamma = 1.05;
 
 
 // ======================================
-// EARTH AND SPACE APPEARANCE
+// EARTH APPEARANCE
 // ======================================
 
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
@@ -93,20 +106,14 @@ console.log("OrbitGuard Earth ready!");
 
 
 // ======================================
-// API ENDPOINTS
-// ======================================
-
-const SATELLITE_API = "https://orbitguard-api-oud7.onrender.com/live-satellites";
-const DEBRIS_API = "https://orbitguard-api-oud7.onrender.com/live-debris";
-const liveSatelliteEntities = new Map();
-const liveDebrisEntities = new Map();
-
-
-// ======================================
 // TEME TO EARTH-FIXED CONVERSION
 // ======================================
 
 function convertTemePosition(position, calculatedAt) {
+
+    if (!position || !calculatedAt) {
+        throw new Error("Missing orbital position or calculation time");
+    }
 
     const date = new Date(calculatedAt);
 
@@ -163,15 +170,23 @@ async function loadLiveSatellites() {
 
     try {
 
-        const response = await fetch(SATELLITE_API, {
+        console.log("Fetching live satellites...");
+
+        const response = await fetch(window.SATELLITE_API, {
             cache: "no-store"
         });
 
         if (!response.ok) {
-            throw new Error("Satellite API request failed");
+            throw new Error(
+                "Satellite API request failed: " + response.status
+            );
         }
 
         const data = await response.json();
+
+        if (!Array.isArray(data.satellites)) {
+            throw new Error("Invalid satellite API response");
+        }
 
         const satellites =
             data.satellites.slice(0, MAX_VISIBLE_SATELLITES);
@@ -232,7 +247,8 @@ async function loadLiveSatellites() {
                         fillColor: Cesium.Color.WHITE,
                         show: false,
                         showBackground: true,
-                        backgroundColor: Cesium.Color.BLACK.withAlpha(0.7),
+                        backgroundColor:
+                            Cesium.Color.BLACK.withAlpha(0.7),
                         pixelOffset: new Cesium.Cartesian2(0, -16),
                         distanceDisplayCondition:
                             new Cesium.DistanceDisplayCondition(
@@ -283,15 +299,21 @@ async function loadLiveDebris() {
 
         console.log("Fetching orbital debris...");
 
-        const response = await fetch(DEBRIS_API, {
+        const response = await fetch(window.DEBRIS_API, {
             cache: "no-store"
         });
 
         if (!response.ok) {
-            throw new Error("Debris API request failed: " + response.status);
+            throw new Error(
+                "Debris API request failed: " + response.status
+            );
         }
 
         const data = await response.json();
+
+        if (!Array.isArray(data.debris)) {
+            throw new Error("Invalid debris API response");
+        }
 
         data.debris.forEach(debris => {
 
@@ -360,7 +382,7 @@ async function loadLiveDebris() {
 
         });
 
-        console.log("Live debris loaded:", data.count);
+        console.log("Live debris loaded:", data.debris.length);
         console.log("Debris source:", data.data_source);
 
     } catch (error) {
@@ -376,20 +398,36 @@ async function loadLiveDebris() {
 // LOAD ALL ORBITAL OBJECTS
 // ======================================
 
+let isLoadingOrbitalObjects = false;
+
 async function loadAllOrbitalObjects() {
+
+    if (isLoadingOrbitalObjects) {
+        return;
+    }
+
+    isLoadingOrbitalObjects = true;
 
     console.log("Loading orbital objects...");
 
-    await Promise.all([
-        loadLiveSatellites(),
-        loadLiveDebris()
-    ]);
+    try {
 
-    console.log(
-        "OrbitGuard tracking complete!",
-        "Satellites:", liveSatelliteEntities.size,
-        "Debris:", liveDebrisEntities.size
-    );
+        await Promise.all([
+            loadLiveSatellites(),
+            loadLiveDebris()
+        ]);
+
+        console.log(
+            "OrbitGuard tracking complete!",
+            "Satellites:", liveSatelliteEntities.size,
+            "Debris:", liveDebrisEntities.size
+        );
+
+    } finally {
+
+        isLoadingOrbitalObjects = false;
+
+    }
 
 }
 
